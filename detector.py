@@ -92,22 +92,27 @@ model = torch.nn.Sequential(
 loss = torch.nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters())
 
+ # TODO: this should be read from the zarr array
+voxel_size = zarr.open("img_data.zarr", "r")["raw"].attrs["resolution"]
+#gp.Coordinate((5, 1625, 1625, 1625)) # how to determine this using the zarr container?
+input_shape = gp.Coordinate((1, 128, 128, 128))
+output_shape = gp.Coordinate((1, 88, 88, 88)) # only 3 levels? could be deeper, no? since more levels means more eonvolutions, which means better feature extractions
+input_size = input_shape * voxel_size
+output_size = output_shape * voxel_size
+
 def train(num_iterations):
-    raw = gp.ArrayKey("RAW") 
-    seam_cells = gp.GraphKey("SEAM_CELLS") # i dont get how we're storing the csv information and then randomly splitting it?
+    train_raw = gp.ArrayKey("RAW") 
+    seam_cells = gp.GraphKey("SEAM_CELLS")
     seam_cell_blobs = gp.ArrayKey("SEAM_CELL_BLOBS")
     prediction = gp.ArrayKey("PREDICTION")
-    raw_source = gp.ZarrSource("img_data.zarr", { raw: "raw"})
-    seam_cell_source = gp.CsvPointsSource("train.csv", seam_cells) # does this even work for our CSV file cuz of how its set up?
+    raw_source = gp.ZarrSource("img_data.zarr", { train_raw: "raw"})
+    seam_cell_source = gp.CsvPointsSource("train.csv", seam_cells)
     combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
-    # TODO: this should be read from the zarr array
-    voxel_size = zarr.open("img_data.zarr", "r")["raw"].attrs["resolution"]
-    gp.Coordinate((5, 1625, 1625, 1625)) # how to determine this using the zarr container?
     
     pipeline = (
         combined_source +
         gp.RandomLocation(ensure_nonempty=seam_cells) +
-        gp.IntensityAugment(raw, scale=1.1, shift=0.1) +
+        gp.IntensityAugment(train_raw, scale=1.1, shift=0.1) +
         gp.RasterizeGraph(
             seam_cells,
             seam_cell_blobs, # turns the graph in 'seam_cells' into an  array, sets that array to seam_cell_blobs. 
@@ -122,7 +127,7 @@ def train(num_iterations):
             loss,
             optimizer,
             inputs={
-                "input": raw
+                "input": train_raw
             },
             outputs={
                 0: prediction
@@ -138,7 +143,7 @@ def train(num_iterations):
         ) +
         gp.Snapshot(
             {
-                raw: "raw",
+                train_raw: "raw",
                 seam_cell_blobs: "target",
                 prediction: "prediction"
             },
@@ -146,12 +151,9 @@ def train(num_iterations):
         )
     )
     # shape = in voxels
-    input_shape = gp.Coordinate((1, 128, 128, 128))
-    output_shape = gp.Coordinate((1, 88, 88, 88)) # only 3 levels? could be deeper, no? since more levels means more eonvolutions, which means better feature extractions
-    input_size = input_shape * voxel_size
-    output_size = output_shape * voxel_size
+    
     request = gp.BatchRequest()
-    request[raw] = input_size
+    request[train_raw] = input_size
     request[seam_cell_blobs] = output_size
     request[prediction] = output_size
     with gp.build(pipeline):
@@ -169,8 +171,29 @@ def validate(num_iterations):
 # a test method
 def test(num_iterations):
     model.eval()
+    test_raw = gp.ArrayKey("RAW") 
+    seam_cells = gp.GraphKey("SEAM_CELLS")
+    seam_cell_blobs = gp.ArrayKey("SEAM_CELL_BLOBS")
+    prediction = gp.ArrayKey("PREDICTION")
+    raw_source = gp.ZarrSource("img_data.zarr", { test_raw: "raw"})
+    seam_cell_source = gp.CsvPointsSource("train.csv", seam_cells)
+    combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
     pipeline = (
-      
+      combined_source+
+      gp.torchPredict(
+        model,
+        inputs = {
+            'input': test_raw
+        },
+        outputs = {
+            0: prediction
+        }
+      )
     )
-
-    pass
+    
+    request = gp.BatchRequest()
+    request[test_raw] = input_size
+    request[prediction] = output_size
+    with gp.build(pipeline):
+        for i in range(num_iterations): # is this the number of epochs?
+            pipeline.request_batch(request)
