@@ -4,10 +4,40 @@ import torch
 import glob
 import tifffile
 import numpy as np
-import random
 import csv
 import pandas as pd
+import matplotlib.pyplot as plt
 from funlib.learn.torch.models import UNet, ConvPass
+
+# helper function to show image(s)
+def imshow(raw, ground_truth=None, prediction=None):
+  rows = 1
+  if ground_truth is not None:
+    rows += 1
+  if prediction is not None:
+    rows += 1
+  cols = raw.shape[0] if len(raw.shape) > 3 else 1
+  fig, axes = plt.subplots(rows, cols, figsize=(10, 4), sharex=True, sharey=True, squeeze=False)
+  if len(raw.shape) == 3:
+    axes[0][0].imshow(raw.transpose(1, 2, 0))
+  else:
+    for i, im in enumerate(raw):
+      axes[0][i].imshow(im.transpose(1, 2, 0))
+  row = 1
+  if ground_truth is not None:
+    if len(ground_truth.shape) == 3:
+      axes[row][0].imshow(ground_truth[0])
+    else:
+      for i, gt in enumerate(ground_truth):
+        axes[row][i].imshow(gt[0])
+    row += 1
+  if prediction is not None:
+    if len(prediction.shape) == 3:
+      axes[row][0].imshow(prediction[0])
+    else:
+      for i, gt in enumerate(prediction):
+        axes[row][i].imshow(gt[0])
+  plt.show()
 
 # create zarr container
 img_data = zarr.open("img_data")
@@ -16,7 +46,11 @@ img_data = zarr.open("img_data")
 regA_filenames = sorted(glob.glob('/Users/ethantam/Desktop/Raw/RegA/*.tif'))
 regB_filenames = sorted(glob.glob('/Users/ethantam/Desktop/Raw/RegB/*.tif'))
 csv_filenames = glob.glob('/Users/ethantam/Desktop/Raw/SeamCellCoordinates/*.csv')
-random.shuffle(csv_filenames)
+
+# use this for cluster
+# regA_filenames = sorted(glob.glob('/groups/funke/home/tame/regA*.tif'))
+# regB_filenames = sorted(glob.glob('/groups/funke/home/tame/regB*.tif'))
+# csv_filenames = sorted(glob.glob('/groups/funke/home/tame/seamcellcoordinates/*.csv'))
 
 d, h, w = tifffile.imread(regA_filenames[0]).shape
 
@@ -60,11 +94,6 @@ train_df.to_csv('train.csv', index=False)
 val_df.to_csv('val.csv', index=False)
 test_df.to_csv('test.csv', index=False)
 
-# use this for cluster
-# regA_filenames = sorted(glob.glob('/groups/funke/home/tame/regA*.tif'))
-# regB_filenames = sorted(glob.glob('/groups/funke/home/tame/regB*.tif'))
-# csv_filenames = sorted(glob.glob('/groups/funke/home/tame/seamcellcoordinates/*.csv'))
-
 # make sure to use cluster for this!
 all_img_data = np.zeros((2,76,308,425,325)) # all volumes from both channels from the same sequence
 
@@ -73,6 +102,7 @@ for i in range(len(regA_filenames)):
     all_img_data[1,i] = tifffile.imread(regB_filenames[i])
 
 img_data['raw'] = all_img_data
+img_data['raw'].attrs['resolution'] = (5,1625, 1625, 1625) # can't move a zarr file to the cluster, so have to say here
 
 unet = UNet(
   in_channels=3, 
@@ -85,34 +115,32 @@ unet = UNet(
 
 model = torch.nn.Sequential(
     unet,
-    ConvPass(4,1,[(1,1,1)], activation=None), 
+    ConvPass(6,1,[(1,1,1)], activation=None), # final 1x1x1 conv pass
     torch.nn.Sigmoid() 
 )
 
 loss = torch.nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters())
 
- # TODO: this should be read from the zarr array
-voxel_size = zarr.open("img_data.zarr", "r")["raw"].attrs["resolution"]
-#gp.Coordinate((5, 1625, 1625, 1625)) # how to determine this using the zarr container?
+voxel_size = gp.Coordinate(zarr.open("img_data.zarr", "r")["raw"].attrs["resolution"]) # already notated in zarr container
 input_shape = gp.Coordinate((1, 128, 128, 128))
-output_shape = gp.Coordinate((1, 88, 88, 88)) # only 3 levels? could be deeper, no? since more levels means more eonvolutions, which means better feature extractions
+output_shape = gp.Coordinate((1, 88, 88, 88)) 
 input_size = input_shape * voxel_size
 output_size = output_shape * voxel_size
 
 def train(num_iterations):
-    train_raw = gp.ArrayKey("RAW") 
-    seam_cells = gp.GraphKey("SEAM_CELLS")
-    seam_cell_blobs = gp.ArrayKey("SEAM_CELL_BLOBS")
-    prediction = gp.ArrayKey("PREDICTION")
-    raw_source = gp.ZarrSource("img_data.zarr", { train_raw: "raw"})
+    raw = gp.ArrayKey("TRAIN_RAW") 
+    seam_cells = gp.GraphKey("TRAIN_SEAM_CELLS")
+    seam_cell_blobs = gp.ArrayKey("TRAIN_SEAM_CELL_BLOBS")
+    prediction = gp.ArrayKey("TRAIN_PREDICTION")
+    raw_source = gp.ZarrSource("img_data.zarr", { raw: "raw"})
     seam_cell_source = gp.CsvPointsSource("train.csv", seam_cells)
     combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
     
     pipeline = (
         combined_source +
         gp.RandomLocation(ensure_nonempty=seam_cells) +
-        gp.IntensityAugment(train_raw, scale=1.1, shift=0.1) +
+        gp.IntensityAugment(raw, scale=1.1, shift=0.1) +
         gp.RasterizeGraph(
             seam_cells,
             seam_cell_blobs, # turns the graph in 'seam_cells' into an  array, sets that array to seam_cell_blobs. 
@@ -127,7 +155,7 @@ def train(num_iterations):
             loss,
             optimizer,
             inputs={
-                "input": train_raw
+                "input": raw
             },
             outputs={
                 0: prediction
@@ -143,17 +171,15 @@ def train(num_iterations):
         ) +
         gp.Snapshot(
             {
-                train_raw: "raw",
-                seam_cell_blobs: "target",
-                prediction: "prediction"
+                raw: "train_raw",
+                seam_cell_blobs: "train_target",
+                prediction: "train_prediction"
             },
             every=10 # we will save our resulting data ^ at every 10 batches. prob just gets saved locally in the same directory.
         )
     )
-    # shape = in voxels
-    
     request = gp.BatchRequest()
-    request[train_raw] = input_size
+    request[raw] = input_size
     request[seam_cell_blobs] = output_size
     request[prediction] = output_size
     with gp.build(pipeline):
@@ -165,35 +191,106 @@ def train(num_iterations):
 
 # a validate method
 def validate(num_iterations):
-    pass
-
-
-# a test method
-def test(num_iterations):
-    model.eval()
-    test_raw = gp.ArrayKey("RAW") 
-    seam_cells = gp.GraphKey("SEAM_CELLS")
-    seam_cell_blobs = gp.ArrayKey("SEAM_CELL_BLOBS")
-    prediction = gp.ArrayKey("PREDICTION")
-    raw_source = gp.ZarrSource("img_data.zarr", { test_raw: "raw"})
-    seam_cell_source = gp.CsvPointsSource("train.csv", seam_cells)
+    raw = gp.ArrayKey("RAW") 
+    seam_cells = gp.GraphKey("VAL_SEAM_CELLS")
+    seam_cell_blobs = gp.ArrayKey("VAL_SEAM_CELL_BLOBS")
+    prediction = gp.ArrayKey("VAL_PREDICTION")
+    raw_source = gp.ZarrSource("img_data.zarr", { raw: "raw"})
+    seam_cell_source = gp.CsvPointsSource("val.csv", seam_cells)
     combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
+
     pipeline = (
-      combined_source+
-      gp.torchPredict(
-        model,
-        inputs = {
-            'input': test_raw
-        },
-        outputs = {
-            0: prediction
-        }
-      )
+        combined_source +
+        gp.RandomLocation(ensure_nonempty=seam_cells) +
+        gp.IntensityAugment(raw, scale=1.1, shift=0.1) +
+        gp.RasterizeGraph(
+            seam_cells,
+            seam_cell_blobs, # turns the graph in 'seam_cells' into an  array, sets that array to seam_cell_blobs. 
+            array_spec=gp.ArraySpec(voxel_size=voxel_size),
+            settings=gp.RasterizationSettings(
+                radius=20000,
+                mode="peak" # this makes the blob have values 0-1 on a gaussian dist
+            )
+        ) +
+        gp.torch.Train(
+            model,
+            loss,
+            optimizer,
+            inputs={
+                "input": raw
+            },
+            outputs={
+                0: prediction
+            },
+            loss_inputs={
+                0: prediction,
+                1: seam_cell_blobs # ground truth data
+            },
+            array_spec={
+                prediction: gp.ArraySpec(voxel_size=voxel_size)
+            },
+            save_every=1000 # store learned weights at every 1000th iteration
+        ) +
+        gp.Snapshot(
+            {
+                raw: "val_raw",
+                seam_cell_blobs: "val_target",
+                prediction: "val_prediction"
+            },
+            every=10 # we will save our resulting data ^ at every 10 batches. prob just gets saved locally in the same directory.
+        )
     )
-    
     request = gp.BatchRequest()
-    request[test_raw] = input_size
+    request[raw] = input_size
+    request[seam_cell_blobs] = output_size
     request[prediction] = output_size
     with gp.build(pipeline):
         for i in range(num_iterations): # is this the number of epochs?
             pipeline.request_batch(request)
+
+# a test method
+def test(num_iterations):
+    model.eval()
+    raw = gp.ArrayKey("TEST_RAW") 
+    seam_cells = gp.GraphKey("TEST_SEAM_CELLS")
+    seam_cell_blobs = gp.ArrayKey("TEST_SEAM_CELL_BLOBS")
+    prediction = gp.ArrayKey("TEST_PREDICTION")
+    raw_source = gp.ZarrSource("img_data.zarr", { raw: "raw"})
+    seam_cell_source = gp.CsvPointsSource("test.csv", seam_cells)
+    combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
+    pipeline = (
+        combined_source+
+        gp.RasterizeGraph(
+            seam_cells,
+            seam_cell_blobs, # turns the graph in 'seam_cells' into an  array, sets that array to seam_cell_blobs. 
+            array_spec=gp.ArraySpec(voxel_size=voxel_size),
+            settings=gp.RasterizationSettings(
+                radius=20000,
+                mode="peak" # this makes the blob have values 0-1 on a gaussian dist
+            )
+        ) +
+        gp.torchPredict(
+            model,
+            inputs = {
+                'input': raw
+            },
+            outputs = {
+                0: prediction
+            }
+        ) +
+        gp.Snapshot(
+            {
+                raw: "test_raw",
+                seam_cell_blobs: "test_target",
+                prediction: "test_prediction"
+            },
+            every=10 # we will save our resulting data ^ at every 10 batches. prob just gets saved locally in the same directory.
+        )
+    )
+    request = gp.BatchRequest()
+    request[raw] = input_size
+    request[prediction] = output_size
+    with gp.build(pipeline):
+        for i in range(num_iterations): # is this the number of epochs?
+            pipeline.request_batch(request)
+            
