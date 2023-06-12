@@ -19,6 +19,10 @@ if __name__ == "__main__":
 
     # initialize zarr containers
     #OHHHHH so these save your data locally even when you close the program. that's why you kept seeing data already inside
+    img_data = zarr.open('img_data.zarr')
+
+
+
     ztrain =zarr.open('train.zarr') #, 'a'
     zval = zarr.open('val.zarr')
     ztest = zarr.open('test.zarr')
@@ -33,6 +37,7 @@ if __name__ == "__main__":
     random.shuffle(filenames)
 
     # declare number of volumes in training, validation, and testing sets (80-10-10)
+    total = len(filenames)
     num_train = round(0.8 * len(filenames))
     num_val = round(0.1 * len(filenames))
     num_test = len(filenames) - num_train - num_val
@@ -43,6 +48,26 @@ if __name__ == "__main__":
     d, h, w = tiff.imread(filenames[0]).shape
 
     # initialize a certain key and set aside memory
+    img_data.create_dataset('raw', 
+                        shape=(num_train, d, h, w),
+                        chunks=(1, d, h, w),
+                        compression='gzip',
+                        dtype=np.int16)
+
+                        #2x76x300x300x300
+                        #two channels, 76 volumes, dims of each volume
+
+
+                        #csvpointssource
+
+    
+
+
+
+
+
+
+
     ztrain.require_dataset('raw', 
                         shape=(num_train, d, h, w),
                         chunks=(1, d, h, w),
@@ -126,6 +151,7 @@ if __name__ == "__main__":
     all_data['d'] = d
     all_data['h'] = h
     all_data['w'] = w
+    all_data['num_test'] = num_test
     
     # save dict and (d,h,w) in json file
     with open("save_data.json", "w") as outfile:

@@ -16,7 +16,7 @@ w = all_data["w"]
 
 filename = sys.argv[1]
 
-ztrain =zarr.open('train.zarr')
+ztrain = zarr.open('train.zarr')
 zval = zarr.open('val.zarr')
 ztest = zarr.open('test.zarr')
 
