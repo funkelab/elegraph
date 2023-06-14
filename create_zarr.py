@@ -15,7 +15,6 @@ regB_filenames = sorted(glob.glob('/groups/funke/home/tame/RegB/*.tif'))
 all_img_data = np.zeros((2,96,308,425,325), dtype=np.float32) 
 # all volumes from both channels from the same sequence
 
-
 # insert volumes as matrices into the array
 for filename in tqdm(regA_filenames):
     frame = int(filename.split(".")[0].split("_")[-1])
