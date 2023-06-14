@@ -1,4 +1,4 @@
-from parameters import model, loss, optimizer, input_size, output_size, voxel_size, raw_filename
+from parameters import model, input_size, output_size, voxel_size, raw_filename # will the trained model be properly imported here?
 
 import gunpowder as gp
 
