@@ -3,6 +3,7 @@ from parameters import model, loss, optimizer, input_size, output_size, voxel_si
 import gunpowder as gp
 
 def validate(num_iterations):
+    model.eval()
     raw = gp.ArrayKey("RAW")
     seam_cells = gp.GraphKey("VAL_SEAM_CELLS")
     seam_cell_blobs = gp.ArrayKey("VAL_SEAM_CELL_BLOBS")
@@ -24,6 +25,7 @@ def validate(num_iterations):
                 mode="peak",  # this makes the blob have values 0-1 on a gaussian dist
             ),
         )
+        + gp.torchPredict(model, inputs={"input": raw}, outputs={0: prediction}) # how do we extract predicted area?
         + gp.Snapshot(
             {
                 raw: "val_raw",
