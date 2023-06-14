@@ -1,7 +1,10 @@
 import glob
 import csv
 import pandas as pd
+import random
 
+# set psuedorandomness
+random.seed(123)
 csv_filenames = sorted(glob.glob("/groups/funke/home/tame/seamcellcoordinates/*.csv"))
 
 # write large csv file containing all seam cells
@@ -30,9 +33,10 @@ with open("all_seam_cells.csv", "w") as f:
 
 # shuffle large csv file
 df = pd.read_csv("all_seam_cells.csv")
-# TODO: make deterministic by setting a seed
-shuffled_df = df.sample(frac=1).reset_index(drop=True)
-shuffled_df.to_csv("all_seam_cells.csv", index=False)
+row_indices = list(range(len(df)))
+random.shuffle(row_indices)
+shuffled_df = df.iloc[row_indices]
+shuffled_df.to_csv('all_seam_cells.csv', index=False)
 
 # split large csv file into 3 csv files (80% train, 10% validation, 10% test)
 df = pd.read_csv("all_seam_cells.csv")
