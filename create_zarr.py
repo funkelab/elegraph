@@ -18,7 +18,6 @@ all_img_data = np.zeros((2,96,308,425,325), dtype=np.float32)
 # insert volumes as matrices into the array
 for filename in tqdm(regA_filenames):
     frame = int(filename.split(".")[0].split("_")[-1])
-    print(frame)
     # raw data is uint16, divide by 2**16 to normalize
     all_img_data[0, frame] = tifffile.imread(filename)
 

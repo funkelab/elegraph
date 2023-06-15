@@ -1,5 +1,5 @@
 from parameters import model, input_size, output_size, voxel_size, raw_filename # will the trained model be properly imported here?
-
+# update model weights from snapshots
 import gunpowder as gp
 
 def validate(num_iterations):
@@ -9,7 +9,7 @@ def validate(num_iterations):
     seam_cell_blobs = gp.ArrayKey("VAL_SEAM_CELL_BLOBS")
     prediction = gp.ArrayKey("VAL_PREDICTION")
     raw_source = gp.ZarrSource(raw_filename, {raw: "raw"})
-    seam_cell_source = gp.CsvPointsSource("val.csv", seam_cells)
+    seam_cell_source = gp.CsvPointsSource("val.csv", seam_cells, ndims=4, scale=voxel_size)
     combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
 
     pipeline = (
@@ -52,7 +52,7 @@ def test(num_iterations):
     seam_cell_blobs = gp.ArrayKey("TEST_SEAM_CELL_BLOBS")
     prediction = gp.ArrayKey("TEST_PREDICTION")
     raw_source = gp.ZarrSource(raw_filename, {raw: "raw"})
-    seam_cell_source = gp.CsvPointsSource("test.csv", seam_cells)
+    seam_cell_source = gp.CsvPointsSource("test.csv", seam_cells, ndims=4, scale=voxel_size)
     combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
     pipeline = (
         combined_source
