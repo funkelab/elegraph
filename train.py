@@ -99,7 +99,7 @@ def train(num_iterations):
         for i in range(num_iterations):
             pipeline.request_batch(request)
 
-train(10000) 
+train(10001) # +1 to ensure we get the 10th model save
 
 # Questions
 # 1) how do we use gp.Stack() to add the necessary additional dimension when training?
