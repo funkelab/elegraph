@@ -12,7 +12,7 @@ regA_filenames = sorted(glob.glob("/groups/funke/home/lalitm/data/Raw/RegA/*.tif
 regB_filenames = sorted(glob.glob("/groups/funke/home/lalitm/data/Raw/RegB/*.tif"))
 
 # instantiate 5-dim numpy array
-all_img_data = np.zeros((2, 96, 308, 425, 325), dtype=np.float32)
+all_img_data = np.zeros((1, 96, 308, 425, 325), dtype=np.float32)
 
 
 def normalize_min_max_percentile(
@@ -58,12 +58,6 @@ for filename in tqdm(regA_filenames):
         tifffile.imread(filename), 1, 99.8, axis=(0, 1, 2)
     )
 
-# insert volumes as matrices into the array
-for filename in tqdm(regB_filenames):
-    frame = int(filename.split(".")[0].split("_")[-1])
-    all_img_data[1, frame] = normalize_min_max_percentile(
-        tifffile.imread(filename), 1, 99.8, axis=(0, 1, 2)
-    )
 
 
 # set array to zarr container
