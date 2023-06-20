@@ -8,39 +8,64 @@ from tqdm import tqdm
 img_data = zarr.open("img_data.zarr", "a")
 
 # use this for cluster
-regA_filenames = sorted(glob.glob('/groups/funke/home/tame/RegA/*.tif'))
-regB_filenames = sorted(glob.glob('/groups/funke/home/tame/RegB/*.tif'))
+regA_filenames = sorted(glob.glob("/groups/funke/home/lalitm/data/Raw/RegA/*.tif"))
+regB_filenames = sorted(glob.glob("/groups/funke/home/lalitm/data/Raw/RegB/*.tif"))
 
 # instantiate 5-dim numpy array
-all_img_data = np.zeros((2,96,308,425,325), dtype=np.float32) 
-# all volumes from both channels from the same sequence
+all_img_data = np.zeros((2, 96, 308, 425, 325), dtype=np.float32)
+
+
+def normalize_min_max_percentile(
+    x, pmin=3, pmax=99.8, axis=None, clip=False, eps=1e-20, dtype=np.float32
+):
+    """
+    Percentile-based image normalization.
+    Function taken from StarDist repository  https://github.com/stardist/stardist
+    """
+    mi = np.percentile(x, pmin, axis=axis, keepdims=True)
+    ma = np.percentile(x, pmax, axis=axis, keepdims=True)
+    return normalize_mi_ma(x, mi, ma, clip=clip, eps=eps, dtype=dtype)
+
+
+def normalize_mi_ma(x, mi, ma, clip=False, eps=1e-20, dtype=np.float32):
+    """
+    Percentile-based image normalization.
+    Function taken from StarDist repository  https://github.com/stardist/stardist
+    """
+    if dtype is not None:
+        x = x.astype(dtype, copy=False)
+        mi = dtype(mi) if np.isscalar(mi) else mi.astype(dtype, copy=False)
+        ma = dtype(ma) if np.isscalar(ma) else ma.astype(dtype, copy=False)
+        eps = dtype(eps)
+
+    try:
+        import numexpr
+
+        x = numexpr.evaluate("(x - mi) / ( ma - mi + eps )")
+    except ImportError:
+        x = (x - mi) / (ma - mi + eps)
+
+    if clip:
+        x = np.clip(x, 0, 1)
+
+    return x
+
 
 # insert volumes as matrices into the array
 for filename in tqdm(regA_filenames):
     frame = int(filename.split(".")[0].split("_")[-1])
-    # raw data is uint16, divide by 2**16 to normalize
-    all_img_data[0, frame] = tifffile.imread(filename)
+    all_img_data[0, frame] = normalize_min_max_percentile(
+        tifffile.imread(filename), 1, 99.8, axis=(0, 1, 2)
+    )
 
+# insert volumes as matrices into the array
 for filename in tqdm(regB_filenames):
     frame = int(filename.split(".")[0].split("_")[-1])
-    # raw data is uint16, divide by 2**16 to normalize
-    all_img_data[1, frame] = tifffile.imread(filename)
+    all_img_data[1, frame] = normalize_min_max_percentile(
+        tifffile.imread(filename), 1, 99.8, axis=(0, 1, 2)
+    )
 
-min_int_0 = np.min(all_img_data[0])
-max_int_0 = np.max(all_img_data[0])
-scaled_max_int_0 = max_int_0*1.1
-
-min_int_1 = np.min(all_img_data[1])
-max_int_1 = np.max(all_img_data[1])
-scaled_max_int_1 = max_int_1*1.1
-
-print("Min intensity is {}, Max Intensity is {}".format(min_int_0, max_int_0))
-
-all_img_data[0] = (all_img_data[0]-min_int_0)/(scaled_max_int_0-min_int_0)
-all_img_data[1] = (all_img_data[1]-min_int_1)/(scaled_max_int_1-min_int_1)
-
-print(f"Mean intensity: {all_img_data.mean()}")
 
 # set array to zarr container
-img_data['raw'] = all_img_data
-img_data['raw'].attrs['resolution'] = (5,1625,1625,1625)
+img_data["raw"] = all_img_data
+img_data["raw"].attrs["resolution"] = (1, 1625, 1625, 1625)
