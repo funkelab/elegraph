@@ -1,68 +1,116 @@
-from parameters import (
-    model,
-    loss,
-    optimizer,
-    input_size,
-    output_size,
-    voxel_size,
+from train_parameters import (
     raw_filename,
-    checkpoint_path,
+    experiment_name,
+    in_channels,
+    lr,
+    weight_fg,
+    gaussian_threshold,
     batch_size,
+    gaussian_sigma,
+    save_model_every,
+    save_snapshot_every,
+    num_iterations,
 )
 
 import gunpowder as gp
-import numpy as np
+import os
+from funlib.learn.torch.models import UNet, ConvPass
+import zarr
+import torch
+from criterions import Loss
+from models import Model
 
 
 def train(num_iterations):
-    print(voxel_size)
-    raw = gp.ArrayKey("TRAIN_RAW")
-    seam_cells = gp.GraphKey("TRAIN_SEAM_CELLS")
-    seam_cell_blobs = gp.ArrayKey("TRAIN_SEAM_CELL_BLOBS")
-    prediction = gp.ArrayKey("TRAIN_PREDICTION")
-    raw_source = gp.ZarrSource(raw_filename, {raw: "raw"}) + gp.Pad(raw, None)
+    # create model
+    unet = UNet(
+        in_channels=in_channels,
+        num_fmaps=6,
+        fmap_inc_factor=4,
+        downsample_factors=[[2, 2, 2], [2, 2, 2]],
+        kernel_size_down=[[[3, 3, 3], [3, 3, 3]]] * 3,
+        kernel_size_up=[[[3, 3, 3], [3, 3, 3]]] * 2,
+        padding="valid",
+    )
+
+    unet_custom = Model(unet)
+    model = torch.nn.Sequential(
+        unet_custom,
+        ConvPass(6, 1, [(1, 1, 1)], activation="Sigmoid"),
+    )
+
+    # create loss
+    loss = Loss(
+        path=os.path.join('experiments', experiment_name, 'train_loss.csv'),
+        weight_fg=weight_fg,
+        gaussian_threshold=gaussian_threshold,
+    )
+
+    # create optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # get voxel size
+    voxel_size = gp.Coordinate(zarr.open(raw_filename, "r")['raw'].attrs['resolution'])
+    input_shape = gp.Coordinate((1, 128, 128, 128))
+    output_shape = gp.Coordinate((1, 88, 88, 88))
+    input_size = input_shape * voxel_size
+    output_size = output_shape * voxel_size
+
+    if not os.path.exists('experiments/' + experiment_name):
+        os.makedirs('experiments/' + experiment_name)
+    if not os.path.exists('experiments/' + experiment_name + '/models/'):
+        os.makedirs('experiments/' + experiment_name + '/models/')
+    if not os.path.exists('experiments/' + experiment_name + '/snapshots/'):
+        os.makedirs('experiments/' + experiment_name + '/snapshots/')
+
+    raw = gp.ArrayKey('TRAIN_RAW')
+    seam_cells = gp.GraphKey('TRAIN_SEAM_CELLS')
+    seam_cell_blobs = gp.ArrayKey('TRAIN_SEAM_CELL_BLOBS')
+    prediction = gp.ArrayKey('TRAIN_PREDICTION')
+    raw_source = gp.ZarrSource(raw_filename, {raw: 'raw'}) + gp.Pad(raw, None)
     seam_cell_source = gp.CsvPointsSource(
-        "train.csv", seam_cells, ndims=4, scale=voxel_size
-    )  # TODO
+        'train.csv', seam_cells, ndims=4, scale=voxel_size
+    )
 
     combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
-    stack = gp.Stack(batch_size)  # TODO
+    stack = gp.Stack(batch_size)
     pipeline = (
         combined_source
-        + gp.RandomLocation(ensure_nonempty=seam_cells)  # TODO
-        + gp.IntensityAugment(
-            raw, scale_min=1.1, scale_max=1.5, shift_min=0.1, shift_max=0.5
-        )
+        + gp.RandomLocation(ensure_nonempty=seam_cells)
+        # + gp.IntensityAugment(
+        #    raw, scale_min=1.1, scale_max=1.5, shift_min=0.1, shift_max=0.5
+        # )
         + gp.RasterizeGraph(
             seam_cells,
             seam_cell_blobs,
             array_spec=gp.ArraySpec(voxel_size=voxel_size),
             settings=gp.RasterizationSettings(
-                radius=(0.01, 20000, 20000, 20000),
-                mode="peak",  # this makes the blob have values 0-1 on a gaussian dist
+                radius=(0.01, gaussian_sigma, gaussian_sigma, gaussian_sigma),
+                mode='peak',
             ),
         )
-        + stack  # TODO
-        + gp.torch.Train(  # model's parameters update at each batch (1 sample of raw)
+        + stack
+        + gp.torch.Train(
             model,
             loss,
             optimizer,
-            inputs={"input": raw},
+            inputs={'input': raw},
             outputs={0: prediction},
-            loss_inputs={0: prediction, 1: seam_cell_blobs},  # ground truth data
+            loss_inputs={0: prediction, 1: seam_cell_blobs},
             array_specs={prediction: gp.ArraySpec(voxel_size=voxel_size)},
-            save_every=100,  # save model at every 1000th iteration
-            checkpoint_basename=checkpoint_path,
+            save_every=save_model_every,
+            checkpoint_basename=os.path.join('experiments', experiment_name, 'models/model'),
         )
         + gp.Snapshot(
             {
-                raw: "train_raw",
-                seam_cells: "seam_cells",
-                seam_cell_blobs: "train_target",
-                prediction: "train_prediction",
+                raw: 'raw',
+                seam_cells: 'seam_cells',
+                seam_cell_blobs: 'target',
+                prediction: 'prediction',
             },
-            every=10,  # save snapshot at every 10th batch
-            output_filename="{iteration}".zfill(3) + ".zarr",
+            every=save_snapshot_every,
+            output_dir=os.path.join('experiments', experiment_name, 'snapshots'),
+            output_filename='{iteration}.zarr',
         )
     )
     request = gp.BatchRequest()
@@ -73,13 +121,7 @@ def train(num_iterations):
 
     with gp.build(pipeline):
         for i in range(num_iterations):
-            batch = pipeline.request_batch(request)
-            for s in range(batch_size):
-                print(
-                    "s = {}, prediction, mean = {}".format(
-                        s, np.mean(batch[prediction].data[s])
-                    )
-                )
+            pipeline.request_batch(request)
 
 
-train(10001)  # +1 to ensure we get the 10th model save
+train(num_iterations)
