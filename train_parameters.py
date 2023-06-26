@@ -1,0 +1,11 @@
+experiment_name = 'test-001'  # TODO (specify a name for each new experiment) 
+raw_filename = '/groups/funke/home/lalitm/github/elegraph/img_data.zarr'  # TODO (specify path to img_data.zarr)
+in_channels = 1
+lr = 5e-4
+weight_fg = 100.0
+gaussian_threshold = 0.1
+batch_size = 10
+gaussian_sigma = 10000
+save_model_every = 20  
+save_snapshot_every = 20  
+num_iterations = 101
