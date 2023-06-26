@@ -1,5 +1,11 @@
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('test', type=str)
+args = parser.parse_args()
+test = args.test
+
 import sys
-directory_path = "/groups/funke/home/tame/experiments/test-001" #hm, i would have to change this and create a test_001 directory in experiments before running train.pyy
+directory_path = "/groups/funke/home/tame/experiments/" + test 
 sys.path.append(directory_path)
 
 from test_parameters import (
@@ -11,7 +17,8 @@ from test_parameters import (
     num_iterations,
     batch_size,
     input_dim,
-    output_dim
+    output_dim,
+    gaussian_sigma
 )
 
 def test(num_iterations):
@@ -24,6 +31,7 @@ def test(num_iterations):
     seam_cell_source = gp.CsvPointsSource("test.csv", seam_cells, ndims=4, scale=voxel_size)
     combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
     stack = gp.Stack(1)
+    precache = gp.PreCache(cache_size=50, num_workers=20)
     
     # get voxel size
     voxel_size = gp.Coordinate(zarr.open(raw_filename, "r")['raw'].attrs['resolution'])
@@ -36,6 +44,8 @@ def test(num_iterations):
 
     scan_request = gp.BatchRequest()
     scan_request.add(raw, input_size)
+    scan_request.add(seam_cells, output_size)
+    scan_request.add(seam_cell_blobs, output_size)
     scan_request.add(prediction, output_size)
 
     scan = gp.Scan(scan_request)
@@ -47,11 +57,12 @@ def test(num_iterations):
             seam_cell_blobs,  
             array_spec=gp.ArraySpec(voxel_size=voxel_size),
             settings=gp.RasterizationSettings(
-                radius=(0.01, 10000, 10000, 10000),
+                radius=(0.01, gaussian_sigma, gaussian_sigma, gaussian_sigma),
                 mode="peak",  # this makes the blob have values 0-1 on a gaussian dist
             ),
         )
         + stack
+        + precache
         + gp.torchPredict(model, inputs={"input": raw}, outputs={0: prediction})
         + gp.Snapshot(
             {
@@ -77,6 +88,7 @@ def test(num_iterations):
             for i in range(num_iterations):
                 batch = pipeline.request_batch(request)
                 f1_score = calc_f1_volumes(batch[seam_cell_blobs].data, batch[prediction].data) # batch size is 1, so [i] should only access one volume
+                print("F1 Score: ", f1_score)
                 if count == 1:
                     writer.writerow(["Sample", "F1_Score"])  # header
                 writer.writerow([count, f1_score])
@@ -84,4 +96,3 @@ def test(num_iterations):
                 avg_f1_score += f1_score
             avg_f1_score = avg_f1_score / num_iterations
             writer.writerow(["Average F1 Score:", avg_f1_score])
-        print("F1 Score: ", f1_score)

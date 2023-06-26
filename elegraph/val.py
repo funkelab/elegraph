@@ -1,5 +1,11 @@
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('test', type=str)
+args = parser.parse_args()
+test = args.test
+
 import sys
-directory_path = "/groups/funke/home/tame/experiments/test-001" #hm, i would have to change this and create a test_001 directory in experiments before running train.pyy
+directory_path = "/groups/funke/home/tame/experiments/" + test 
 sys.path.append(directory_path)
 
 from val_parameters import (
@@ -11,7 +17,8 @@ from val_parameters import (
     num_iterations,
     batch_size,
     input_dim,
-    output_dim
+    output_dim,
+    gaussian_sigma
 )
 
 from metric import calc_f1_volumes
@@ -45,7 +52,7 @@ def validate(num_iterations):
             seam_cell_blobs, 
             array_spec=gp.ArraySpec(voxel_size=voxel_size),
             settings=gp.RasterizationSettings(
-                radius=(0.01, 10000, 10000, 10000),
+                radius=(0.01, gaussian_sigma, gaussian_sigma, gaussian_sigma),
                 mode="peak",  
             ),
         )
@@ -75,6 +82,7 @@ def validate(num_iterations):
             for i in range(num_iterations):
                 batch = pipeline.request_batch(request)
                 f1_score = calc_f1_volumes(batch[seam_cell_blobs].data, batch[prediction].data) # batch size is 1, so [i] should only access one volume
+                print("F1 Score: ", f1_score)
                 if count == 1:
                     writer.writerow(["Sample", "F1_Score"])  # header
                 writer.writerow([count, f1_score])
@@ -82,4 +90,3 @@ def validate(num_iterations):
                 avg_f1_score += f1_score
             avg_f1_score = avg_f1_score / num_iterations
             writer.writerow(["Average F1 Score:", avg_f1_score])
-        print("F1 Score: ", f1_score)
