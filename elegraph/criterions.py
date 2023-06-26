@@ -1,5 +1,6 @@
-import torch
 import csv
+
+import torch
 
 
 class Loss(torch.nn.Module):

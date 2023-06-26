@@ -1,7 +1,8 @@
-import zarr
 import glob
-import tifffile
+
 import numpy as np
+import tifffile
+import zarr
 from tqdm import tqdm
 
 # create zarr container

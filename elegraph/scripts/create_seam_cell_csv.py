@@ -1,21 +1,23 @@
-import glob
 import csv
+import glob
+
 import pandas as pd
 
-csv_filenames = sorted(glob.glob("/groups/funke/home/tame/data/seamcellcoordinates/*.csv"))
+csv_filenames = sorted(
+    glob.glob("/groups/funke/home/tame/data/seamcellcoordinates/*.csv")
+)
 # set aside list that stores times of the 8 (10%) volume frames we want to test on
 
 
 # write large csv file containing all seam cells
 with open("all_seam_cells.csv", "w") as f:
-    
     writer = csv.writer(
         f, delimiter=" ", quotechar="|"
     )  # need to make sure that there are spaces between values
     # writer.writerow(["time", "z", "y", "x", "name", "id"])
     for file in csv_filenames:
         frame = int(file.split(".")[0].split("_")[-1])
-        with open(file, "r") as g:
+        with open(file) as g:
             reader = csv.reader(g)
             for row in reader:
                 if row[1] == "x_voxels":
@@ -24,9 +26,7 @@ with open("all_seam_cells.csv", "w") as f:
                 y = row[2]
                 x = row[1]
                 name = row[0]
-                writer.writerow(
-                    [frame, z, y, x]
-                )  
+                writer.writerow([frame, z, y, x])
 
 # shuffle large csv file
 df = pd.read_csv("all_seam_cells.csv")
