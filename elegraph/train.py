@@ -98,7 +98,7 @@ def train(num_iterations):
         raw_csv_filename, seam_cells, ndims=4, scale=voxel_size
     )
 
-    combined_source = (raw_source, seam_cell_source, *gp.MergeProvider())
+    combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
     stack = gp.Stack(batch_size)
     precache = gp.PreCache(cache_size=50, num_workers=20)
 
@@ -106,7 +106,7 @@ def train(num_iterations):
         combined_source
         + gp.RandomLocation(ensure_nonempty=seam_cells)
         + gp.IntensityAugment(
-            raw, scale_min=1.1, scale_max=1.5, shift_min=0.1, shift_max=0.5, clip=False
+          raw, scale_min=1.1, scale_max=1.5, shift_min=0.1, shift_max=0.5, clip=False
         )
         + gp.RasterizeGraph(
             seam_cells,
