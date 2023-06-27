@@ -15,7 +15,6 @@ sys.path.append(base_dir)
 
 from train_parameters import (
     batch_size,
-    experiment_name,
     fmap_inc_factor,
     gaussian_sigma,
     gaussian_threshold,
@@ -60,7 +59,7 @@ def train(num_iterations):
 
     # create loss
     loss = Loss(
-        path=os.path.join(experiment_name, "train_loss.csv"),
+        path=os.path.join("train_loss.csv"),
         weight_fg=weight_fg,
         gaussian_threshold=gaussian_threshold,
     )
@@ -76,16 +75,14 @@ def train(num_iterations):
     output_size = output_shape * voxel_size
 
     # create directories
-    if not os.path.exists(experiment_name):
-        os.makedirs(experiment_name, exist_ok=True)
-    if not os.path.exists(experiment_name + "/models/"):
+    if not os.path.exists( "models/"):
         os.makedirs(
-            experiment_name + "/models/",
+            "models/",
             exist_ok=True,
         )
-    if not os.path.exists(experiment_name + "/snapshots/"):
+    if not os.path.exists("snapshots/"):
         os.makedirs(
-            experiment_name + "/snapshots/",
+            "snapshots/",
             exist_ok=True,
         )
 
@@ -128,7 +125,7 @@ def train(num_iterations):
             loss_inputs={0: prediction, 1: seam_cell_blobs},
             array_specs={prediction: gp.ArraySpec(voxel_size=voxel_size)},
             save_every=save_model_every,
-            checkpoint_basename=os.path.join(experiment_name, "models/model"),
+            checkpoint_basename="models/model",
         )
         + gp.Unsqueeze([seam_cell_blobs], 1)
         + gp.Snapshot(
@@ -139,7 +136,7 @@ def train(num_iterations):
                 prediction: "prediction",
             },
             every=save_snapshot_every,
-            output_dir=os.path.join(experiment_name, "snapshots"),
+            output_dir="snapshots",
             output_filename="{iteration}.zarr",
         )
     )
