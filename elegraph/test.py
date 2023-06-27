@@ -1,98 +1,122 @@
-import argparse
-parser = argparse.ArgumentParser()
-parser.add_argument('test', type=str)
-args = parser.parse_args()
-test = args.test
-
+import os
 import sys
-directory_path = "/groups/funke/home/tame/experiments/" + test 
-sys.path.append(directory_path)
+
+import gunpowder as gp
+import torch
+import zarr
+from funlib.learn.torch.models import ConvPass, UNet
+from models import Model, UnsqueezeModel
+
+base_dir = os.getcwd()
+sys.path.append(base_dir)
+
 
 from test_parameters import (
-    model, 
-    save_snapshot_every, 
-    raw_filename, 
-    test_csv, 
-    f1_score_csv, 
-    num_iterations,
-    batch_size,
-    input_dim,
-    output_dim,
-    gaussian_sigma
+    raw_filename,
+    checkpoint_path,
 )
 
-def test(num_iterations):
+from train_parameters import (
+    num_fmaps,
+    fmap_inc_factor,
+    levels,
+    in_channels,
+    input_dim,
+    output_dim
+)
+
+
+def test():
+    if not os.path.exists("inference/"):
+        os.makedirs("inference/")
+
+    # create model
+    unet = UNet(
+        in_channels=in_channels,
+        num_fmaps=num_fmaps,
+        fmap_inc_factor=fmap_inc_factor,
+        downsample_factors=[[2, 2, 2], [2, 2, 2]],
+        kernel_size_down=[[[3, 3, 3], [3, 3, 3]]] * levels,
+        kernel_size_up=[[[3, 3, 3], [3, 3, 3]]] * (levels-1),
+        padding="valid",
+    )
+
+    unet_custom = Model(unet)
+    unsqueeze_custom = UnsqueezeModel()
+    model = torch.nn.Sequential(
+        unet_custom,
+        ConvPass(6, 1, [(1, 1, 1)], activation="Sigmoid"),
+        unsqueeze_custom
+    )
+
+    # replace state of weight with pre-trained model weights
+    state = torch.load(checkpoint_path)
+    model.load_state_dict(state["model_state_dict"], strict=True)
+
+    # set in eval mode
     model.eval()
-    raw = gp.ArrayKey("TEST_RAW")
-    seam_cells = gp.GraphKey("TEST_SEAM_CELLS")
-    seam_cell_blobs = gp.ArrayKey("TEST_SEAM_CELL_BLOBS")
-    prediction = gp.ArrayKey("TEST_PREDICTION")
-    raw_source = gp.ZarrSource(raw_filename, {raw: "raw"})
-    seam_cell_source = gp.CsvPointsSource("test.csv", seam_cells, ndims=4, scale=voxel_size)
-    combined_source = (raw_source, seam_cell_source) + gp.MergeProvider()
-    stack = gp.Stack(1)
-    precache = gp.PreCache(cache_size=50, num_workers=20)
-    
+
     # get voxel size
-    voxel_size = gp.Coordinate(zarr.open(raw_filename, "r")['raw'].attrs['resolution'])
-    input_shape = gp.Coordinate((1, input_dim, input_dim, input_dim))
-    output_shape = gp.Coordinate((1, output_dim, output_dim, output_dim))
-    final_output_shape = gp.Coordinate((1, 308, 425, 325))
+    voxel_size = gp.Coordinate(zarr.open(raw_filename, "r")["raw"].attrs["resolution"])
+
+    # get scan tile size
+    input_tile_shape = gp.Coordinate((1, input_dim, input_dim, input_dim))
+    output_tile_shape = gp.Coordinate((1, output_dim, output_dim, output_dim))
+    input_tile_size = input_tile_shape * voxel_size
+    output_tile_size = output_tile_shape * voxel_size
+
+    # get actual size
+    input_shape = gp.Coordinate((96, 308, 425, 325))
+    output_shape = gp.Coordinate((96, 308, 425, 325))
     input_size = input_shape * voxel_size
     output_size = output_shape * voxel_size
-    final_output_size = final_output_shape * voxel_size
 
+    raw = gp.ArrayKey("TEST_RAW")
+    prediction = gp.ArrayKey("TEST_PREDICTION")
+    raw_source = gp.ZarrSource(raw_filename, {raw: "raw"}) + gp.Pad(raw, None)
+    stack = gp.Stack(1)
+
+
+    # request matching the model input and output sizes
     scan_request = gp.BatchRequest()
-    scan_request.add(raw, input_size)
-    scan_request.add(seam_cells, output_size)
-    scan_request.add(seam_cell_blobs, output_size)
-    scan_request.add(prediction, output_size)
-
+    scan_request.add(raw, input_tile_size)
+    scan_request.add(prediction, output_tile_size)
     scan = gp.Scan(scan_request)
-    
+
+    # prepare the zarr dataset to write to
+    f = zarr.open("inference/result.zarr")
+    ds = f.create_dataset("prediction", shape=(1, 1, 96, 308, 425, 325))
+    ds.attrs["resolution"] = (1, 1625, 1625, 1625)
+    ds.attrs["offset"] = (0, 0, 0, 0)
+    ds2 = f.create_dataset("raw", shape=(1, 2, 96, 308, 425, 325))
+    ds2.attrs["resolution"] = (1, 1625, 1625, 1625)
+    ds2.attrs["offset"] = (0, 0, 0, 0)
+
+    # create a zarr write node to store the predictions
+    zarr_write = gp.ZarrWrite(
+        output_filename="inference/result.zarr",
+        dataset_names={raw: "raw", prediction: "prediction"},
+     )
+
     pipeline = (
-        combined_source
-        + gp.RasterizeGraph(
-            seam_cells,
-            seam_cell_blobs,  
-            array_spec=gp.ArraySpec(voxel_size=voxel_size),
-            settings=gp.RasterizationSettings(
-                radius=(0.01, gaussian_sigma, gaussian_sigma, gaussian_sigma),
-                mode="peak",  # this makes the blob have values 0-1 on a gaussian dist
-            ),
-        )
+        raw_source
         + stack
-        + precache
-        + gp.torchPredict(model, inputs={"input": raw}, outputs={0: prediction})
-        + gp.Snapshot(
-            {
-                raw: "raw",
-                seam_cell_blobs: "target",
-                prediction: "prediction",
-            },
-            every=10, 
+        + gp.torch.Predict(
+            model,
+            inputs={"input": raw},
+            outputs={0: prediction},
+            array_specs={prediction: gp.ArraySpec(voxel_size=voxel_size)},
         )
+        + zarr_write
         + scan
     )
+
     request = gp.BatchRequest()
-    request.add(raw, final_output_size)
-    request.add(seam_cells, final_output_size)
-    request.add(seam_cell_blobs, final_output_size)
-    request.add(prediction, final_output_size)
+    request.add(raw, input_size)
+    request.add(prediction, output_size)
 
     with gp.build(pipeline):
-        avg_f1_score = 0
-        count = 1
-        with open(f1_score_csv, "a") as f:
-            writer = csv.writer(f, delimiter=" ")
-            for i in range(num_iterations):
-                batch = pipeline.request_batch(request)
-                f1_score = calc_f1_volumes(batch[seam_cell_blobs].data, batch[prediction].data) # batch size is 1, so [i] should only access one volume
-                print("F1 Score: ", f1_score)
-                if count == 1:
-                    writer.writerow(["Sample", "F1_Score"])  # header
-                writer.writerow([count, f1_score])
-                count += 1
-                avg_f1_score += f1_score
-            avg_f1_score = avg_f1_score / num_iterations
-            writer.writerow(["Average F1 Score:", avg_f1_score])
+        batch = pipeline.request_batch(request)
+        print(np.min(batch[raw].data), np.max(batch[raw].data))
+
+test()
