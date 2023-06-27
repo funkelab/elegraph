@@ -1,4 +1,3 @@
-experiment_name = "test-001" 
 raw_filename = "/groups/funke/home/tame/data/img_data.zarr"
 raw_csv_filename="/groups/funke/home/tame/data/train.csv"
 in_channels = 2
