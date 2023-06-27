@@ -1,4 +1,7 @@
-import argparse
+# To run in the terminal, cd into `experiments/demo_1` directory
+# and type `python ../../elegraph/train.py`.
+# Make sure that the demo_1 directory has a `train_parameters.py` file
+
 import os
 import sys
 
@@ -6,6 +9,10 @@ import gunpowder as gp
 import torch
 import zarr
 from funlib.learn.torch.models import ConvPass, UNet
+
+base_dir = os.getcwd()
+sys.path.append(base_dir)
+
 from train_parameters import (
     batch_size,
     experiment_name,
@@ -19,6 +26,7 @@ from train_parameters import (
     num_fmaps,
     num_iterations,
     output_dim,
+    raw_csv_filename,
     raw_filename,
     save_model_every,
     save_snapshot_every,
@@ -27,19 +35,6 @@ from train_parameters import (
 
 from criterions import Loss
 from models import Model, UnsqueezeModel
-
-parser = argparse.ArgumentParser()
-parser.add_argument("test", type=str)
-args = parser.parse_args()
-test = args.test
-
-# To run in the terminal, type `python train.py test-00x`
-# Make sure experiments directory has `test-00x` directory
-# and `train_parameters.py` before running
-
-
-directory_path = "/groups/funke/home/tame/experiments/" + test
-sys.path.append(directory_path)
 
 
 def train(num_iterations):
@@ -65,9 +60,7 @@ def train(num_iterations):
 
     # create loss
     loss = Loss(
-        path=os.path.join(
-            "/groups/funke/home/tame/experiments/", experiment_name, "train_loss.csv"
-        ),
+        path=os.path.join(experiment_name, "train_loss.csv"),
         weight_fg=weight_fg,
         gaussian_threshold=gaussian_threshold,
     )
@@ -83,22 +76,16 @@ def train(num_iterations):
     output_size = output_shape * voxel_size
 
     # create directories
-    if not os.path.exists("/groups/funke/home/tame/experiments/" + experiment_name):
+    if not os.path.exists(experiment_name):
+        os.makedirs(experiment_name, exist_ok=True)
+    if not os.path.exists(experiment_name + "/models/"):
         os.makedirs(
-            "/groups/funke/home/tame/experiments/" + experiment_name, exist_ok=True
-        )
-    if not os.path.exists(
-        "/groups/funke/home/tame/experiments/" + experiment_name + "/models/"
-    ):
-        os.makedirs(
-            "/groups/funke/home/tame/experiments/" + experiment_name + "/models/",
+            experiment_name + "/models/",
             exist_ok=True,
         )
-    if not os.path.exists(
-        "/groups/funke/home/tame/experiments/" + experiment_name + "/snapshots/"
-    ):
+    if not os.path.exists(experiment_name + "/snapshots/"):
         os.makedirs(
-            "/groups/funke/home/tame/experiments/" + experiment_name + "/snapshots/",
+            experiment_name + "/snapshots/",
             exist_ok=True,
         )
 
@@ -108,7 +95,7 @@ def train(num_iterations):
     prediction = gp.ArrayKey("TRAIN_PREDICTION")
     raw_source = gp.ZarrSource(raw_filename, {raw: "raw"}) + gp.Pad(raw, None)
     seam_cell_source = gp.CsvPointsSource(
-        "/groups/funke/home/tame/data/train.csv", seam_cells, ndims=4, scale=voxel_size
+        raw_csv_filename, seam_cells, ndims=4, scale=voxel_size
     )
 
     combined_source = (raw_source, seam_cell_source, *gp.MergeProvider())
@@ -118,7 +105,7 @@ def train(num_iterations):
     pipeline = (
         combined_source
         + gp.RandomLocation(ensure_nonempty=seam_cells)
-        + gp.IntensityAugment(  # remove for next run
+        + gp.IntensityAugment(
             raw, scale_min=1.1, scale_max=1.5, shift_min=0.1, shift_max=0.5, clip=False
         )
         + gp.RasterizeGraph(
@@ -141,9 +128,7 @@ def train(num_iterations):
             loss_inputs={0: prediction, 1: seam_cell_blobs},
             array_specs={prediction: gp.ArraySpec(voxel_size=voxel_size)},
             save_every=save_model_every,
-            checkpoint_basename=os.path.join(
-                "/groups/funke/home/tame/experiments", experiment_name, "models/model"
-            ),
+            checkpoint_basename=os.path.join(experiment_name, "models/model"),
         )
         + gp.Unsqueeze([seam_cell_blobs], 1)
         + gp.Snapshot(
@@ -154,9 +139,7 @@ def train(num_iterations):
                 prediction: "prediction",
             },
             every=save_snapshot_every,
-            output_dir=os.path.join(
-                "/groups/funke/home/tame/experiments", experiment_name, "snapshots"
-            ),
+            output_dir=os.path.join(experiment_name, "snapshots"),
             output_filename="{iteration}.zarr",
         )
     )
@@ -169,7 +152,8 @@ def train(num_iterations):
     with gp.build(pipeline):
         for i in range(num_iterations):
             pipeline.request_batch(request)
-            # print(batch[raw].data.shape, batch[prediction].data.shape, batch[seam_cell_blobs].data.shape)
+            # print(batch[raw].data.shape, batch[prediction].data.shape,
+            # batch[seam_cell_blobs].data.shape)
 
 
 train(num_iterations)
