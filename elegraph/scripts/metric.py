@@ -3,6 +3,7 @@ from scipy.optimize import linear_sum_assignment
 import glob
 import csv
 
+
 def max_pooling(volume):
     """
     Use a 3x3x3 kernel to perform max pooling. Output should be the same shape as the original predicted volume.
@@ -10,9 +11,11 @@ def max_pooling(volume):
     The element at the same index in the output volume will be the maximum value of the entire kernel at that iteration.
     """
     # pad volume
-    padded_volume = np.pad(volume, ((1, 1), (1, 1), (1, 1)), mode='constant', constant_values=0)
+    padded_volume = np.pad(
+        volume, ((1, 1), (1, 1), (1, 1)), mode="constant", constant_values=0
+    )
     output_volume = np.zeros(volume.shape)
-    
+
     for z in range(output_volume.shape[0]):
         for y in range(output_volume.shape[1]):
             for x in range(output_volume.shape[2]):
@@ -25,20 +28,21 @@ def max_pooling(volume):
                 output_volume[z, y, x] = np.max(region)
     return output_volume
 
+
 def find_local_max(volume, compare):
     """
     Find and return list of volume's coordinates where the local max values reside.  
     NOTE: Parameter 'compare' can be the max pool volume or an integer
     """
     # create boolean matrix, 'True' indicating local max is at that coordinate, 'False' otherwise
-    binary_matrix = (volume == compare)
+    binary_matrix = volume == compare
     local_maxes = []
 
     for z in range(binary_matrix.shape[0]):
         for y in range(binary_matrix.shape[1]):
             for x in range(binary_matrix.shape[2]):
-                if binary_matrix[z,y,x]:
-                    local_maxes.append((z,y,x))
+                if binary_matrix[z, y, x]:
+                    local_maxes.append((z, y, x))
     return local_maxes
 
 def get_gt_seam_cell_locations():
@@ -79,7 +83,9 @@ def calc_f1_volumes(predicted_volume, gt_locations, max_dist):
     # set array filled with euclidean distance between every ground truth point to a predicted point 
     for row, gt in enumerate(gt_locations):
         for col, pred in enumerate(predicted_local_max):
-            euclid_dist = np.sqrt((gt[0] - pred[0]) ** 2 + (gt[1] - pred[1]) ** 2 + (gt[2] - pred[2]) ** 2)
+            euclid_dist = np.sqrt(
+                (gt[0] - pred[0]) ** 2 + (gt[1] - pred[1]) ** 2 + (gt[2] - pred[2]) ** 2
+            )
             euclid_dist_array[row, col] = euclid_dist
     
     # if distance is higher than max_dist, set to highest value to avoid using it during hungarian alg
@@ -95,7 +101,7 @@ def calc_f1_volumes(predicted_volume, gt_locations, max_dist):
         # if a row has columns that are all the highest value (euclid distance higher than max_dist), then that pred point is a false negative since it was not detected
         if all_highest_val:
             false_neg += 1
-    
+
     # find best matches using hungarian alg
     row_ind, col_ind = linear_sum_assignment(euclid_dist_array)
     true_pos = len(row_ind) - false_neg

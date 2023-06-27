@@ -1,0 +1,16 @@
+raw_filename = "/groups/funke/home/tame/data/img_data.zarr"
+raw_csv_filename="/groups/funke/home/tame/data/train.csv"
+in_channels = 2
+lr = 5e-4
+weight_fg = 100.0
+gaussian_threshold = 0.1
+batch_size = 10
+gaussian_sigma = 10000
+save_model_every = 100
+save_snapshot_every = 100
+num_iterations = 100001
+num_fmaps = 6
+fmap_inc_factor = 4
+input_dim = 128
+output_dim = 88
+levels = 3
