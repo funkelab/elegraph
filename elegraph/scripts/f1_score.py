@@ -212,7 +212,7 @@ def test_f1(large_predicted_volume):
     false_pos = 0
     
     large_predicted_volume=large_predicted_volume[0,0]
-    test_csv_path = "/groups/funke/home/tame/data/test.csv"
+    test_csv_path = "/groups/funke/home/tame/data/val.csv"
     test_data = np.genfromtxt(test_csv_path, delimiter=' ')
     gt_locations = get_gt_seam_cell_locations()
 
