@@ -6,6 +6,9 @@ import numpy as np
 import glob
 import os.path as osp
 import csv
+import torch.nn.functional as F 
+from simclr_loss import SimCLR_Loss
+from scipy.optimize import linear_sum_assignment as lsa
 
 class RandomShift(T.BaseTransform):
     def __init__(self, range):
@@ -24,7 +27,9 @@ class PointCloudDataset(Dataset):
 
     @property
     def raw_file_names(self):
-        return sorted(glob.glob("/groups/funke/home/tame/data/seamcellcoordinates/*.csv"))
+        filenames =sorted(glob.glob("/groups/funke/home/lalitm/data/Raw/SeamCellCoordinates/*.csv"))
+        #print("files found {}".format(len(filenames)))
+        return filenames
         # or "point_cloud.csv"
     
     @property
@@ -68,11 +73,11 @@ class PointCloudDataset(Dataset):
         return len(self.raw_paths) # TODO
 
     def get(self, idx):
-        print("Index is {}".format(idx))
+        #print("Index is {}".format(idx))
         data = torch.load(osp.join(self.processed_dir, f'data_{idx+20}.pt'))
         transformed_data = torch.load(osp.join(self.processed_dir, f'transformed_data_{idx+20}.pt'))
-        print(data.pos.shape)
-        print(transformed_data.pos.shape)
+        #print(data.pos.shape)
+        #print(transformed_data.pos.shape)
 
         if self.transform is not None:
             data = self.transform(data)
@@ -98,37 +103,86 @@ class PointCloudDataset(Dataset):
 #let's try creating this 22 by 5 nearest neighbors
 
 transform = T.Compose([
-    # T.Constant(),
+    T.Constant(),
     T.KNNGraph(k=5),
     T.Distance(),
 ])
 
-root = "/groups/funke/home/tame/data/t_point_clouds/"
+root = "/groups/funke/home/lalitm/data/t_point_clouds/"
 pre_transform = T.Compose([T.RandomFlip(0), T.RandomRotate(120), T.RandomScale((0,2))])
-d = PointCloudDataset(root, pre_transform=pre_transform, transform=transform)
-transformed_loader = DataLoader(d, batch_size=1)
+point_cloud_dataset = PointCloudDataset(root, pre_transform=pre_transform, transform=transform)
+point_cloud_loader = DataLoader(point_cloud_dataset, batch_size=1)
 
-for i, batch in enumerate(transformed_loader):
-    data_knn, transformed_data_knn = batch
-    if i == 0:
-        print(data_knn.edge_attr)
-        print(transformed_data_knn.edge_attr)
+# create model
+from torch_geometric.nn import GATConv
 
-def write_gt():
-    csv_path = "/groups/funke/home/tame/data/gt_matches.csv"
-    path = sorted(glob.glob("/groups/funke/home/tame/data/point_clouds/processed/*.pt"))[:-2]
-    path_transformed = sorted(glob.glob("/groups/funke/home/tame/data/t_point_clouds/processed/*.pt"))[:-2]
-    with open(csv_path, "w") as f:
-        writer = csv.writer(f, delimiter=' ')
-        writer.writerow(["time", "x", "y", "z", "t_x", "t_y", "t_z"])
-        for i in range(len(path)):
-            graph = torch.load(path[i]).pos.numpy()
-            t_graph = torch.load(path_transformed[i]).pos.numpy()
-            for j in range(len(t_graph)):
-                row = np.append(graph[j], t_graph[j])
-                row = np.append(i+20, row)
-                writer.writerow(row)
+class GAT(torch.nn.Module):
+    def __init__(self, num_node_features, num_output_features):
+        super().__init__()
+        self.num_node_features = num_node_features
+        self.num_output_features = num_output_features
+        self.conv1 = GATConv(num_node_features, 16)
+        self.conv2 = GATConv(16, num_output_features)
 
-# write_gt()
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index # TODO
+
+        x = self.conv1(x.float(), edge_index) # TODO
+        x = F.relu(x)
+        #x = F.dropout(x, training=self.training)
+        x = self.conv2(x, edge_index)
+
+        #return F.log_softmax(x, dim=1)
+        return x
+
+model = GAT(num_node_features= 2, num_output_features = 32) # TODO
+model = model.to('cuda')
+
+# create criterion
+criterion = torch.nn.CrossEntropyLoss().to('cuda') # TODO
+
+simclr_loss = SimCLR_Loss(temperature =0.5)
+
+
+# create optimizer
+optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3, weight_decay =
+        5e-4) # TODO
+
+
+
+def train():
+    model.train()
+    loss_list = []
+    accuracy_list = []
+    for i, data in enumerate(point_cloud_loader):
+        optimizer.zero_grad()
+        data_orig = data[0].to('cuda') # TODO
+        data_trans = data[1].to('cuda')
+        print(data_orig.edge_attr)
+        embeddings_orig = model(data_orig)
+        embeddings_trans = model(data_trans)
+        embeddings = torch.cat((embeddings_orig, embeddings_trans), 0)
+        logits, labels = simclr_loss(embeddings)
+        loss = criterion(logits, labels)
+        logits_ = 1-logits[:logits.shape[0]//2, logits.shape[1]//2:]
+        row_ind, col_ind = lsa(logits_.cpu().detach().numpy())
+        accuracy_list.append((row_ind==col_ind).sum()/len(row_ind))
+        loss_list.append(loss.item())
+        loss.backward()
+        optimizer.step()
+    return np.mean(loss_list), np.mean(accuracy_list)
+
+for epoch in range(1, 5000):
+    loss, accuracy = train()
+    print("At epoch {}, loss was {}, accuracy was {}".format(epoch, loss,
+        accuracy))
+
+
+#for i, batch in enumerate(transformed_loader):
+#    data_knn, transformed_data_knn = batch
+#    if i == 0:
+#        print(data_knn.edge_attr)
+#        print(transformed_data_knn.edge_attr)
+
 
 
