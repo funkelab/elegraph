@@ -4,52 +4,59 @@ import matplotlib.pyplot as plt
 from scipy.spatial import ConvexHull
 from scipy.spatial import Delaunay
 from mpl_toolkits.mplot3d import Axes3D
+import glob
+import torch
+from torch_tps import ThinPlateSpline
+from sklearn.preprocessing import normalize
 
-def spline_graph(points, control, filename):
-    colors=["r", "g", "b", "m", "c"]
-    
+def graph(cells):
+    """
+    Graphs a 3D representation of the worm by connecting seam cells.
+    """
     fig = plt.figure()
-    ax = fig.add_subplot(projection='3d')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-
-    for i in range(0,len(points), 4):
-        # control points
-        x = control[i:i+4,0]
-        y = control[i:i+4,1]
-        z = control[i:i+4,2]
-        ax.scatter(x, y, z, c=colors[i//4], marker='o')
-    
-    # seam cell coordinates
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
-    ax.scatter(x, y, z, c="k", marker='*')
-        
-    ax.set_title('Point Cloud')
+    ax = Axes3D(fig)
+    for i in range(len(cells) - 2):
+        x1,x2 = cells[i,0], cells[i+2,0]
+        y1,y2 = cells[i,1], cells[i+2,1]
+        z1,z2 = cells[i,2], cells[i+2,2]
+        ax.plot([x1, x2], [y1, y2], [z1, z2], c="b", label='Line Connecting Points')
+        ax.scatter(x1, y1, z1, c='r', marker='o')
+        ax.scatter(x2, y2, z2, c='r', marker='o')
+    for i in range(len(cells) // 2):
+        i = i * 2
+        x1,x2 = cells[i,0], cells[i+1,0]
+        y1,y2 = cells[i,1], cells[i+1,1]
+        z1,z2 = cells[i,2], cells[i+1,2]
+        ax.plot([x1, x2], [y1, y2], [z1, z2], c="r", label='Line Connecting Points')
+        ax.scatter(x1, y1, z1, c='r', marker='o')
+        ax.scatter(x2, y2, z2, c='r', marker='o')
+    ax.set_title("3D plot")
+    ax.set_xlabel('x-axis')
+    ax.set_ylabel('y-axis')
+    ax.set_zlabel('z-axis')
     plt.show()
-    plt.savefig(filename)
 
 def assemble_T(shift, rotation):
     """
-    shift is a 1x3 numpy array
-    rotation is 3x3 numpy array
+    shift is a 1x3 numpy array.
+    rotation is 3x3 numpy array.
+    Returns a 4x4 transformation matrix. 
     """
-    # print("Rotation: ", rotation)
     T = np.eye(4,4)
     T[:3,:3] = rotation
     T[:3, 3] = shift.transpose()
     return T
 
-# test if making max smaller fixes issue of tight worm
-def sample_shift(min_val=0.0, max_val=0.1):
-    r = np.random.uniform(min_val,max_val,3)
-    # r[0] = 0
-    # r[1] = 0
-    return r
+def sample_shift(min_shift=-0.05, max_shift=0.05): #0.075, 0.025
+    """
+    Returns a randomly sampled 1x3 numpy array for a shift.
+    """
+    return np.random.uniform(min_shift,max_shift,3)
 
-def sample_rotation_axis(theta_min=-(np.pi * 60/180), theta_max=np.pi * 60/180, axis="z"):
+def sample_rotation_axis(theta_min=-(np.pi * 90/180), theta_max=np.pi * 90/180, axis="z"):
+    """
+    Returns a randomly sampled 3x3 numpy array for a rotation.
+    """
     theta = np.random.uniform(theta_min,theta_max,1)[0]
     if axis == "x":
         rotation = np.array([[1,0,0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
@@ -59,65 +66,27 @@ def sample_rotation_axis(theta_min=-(np.pi * 60/180), theta_max=np.pi * 60/180, 
         rotation = np.array([[np.cos(theta),-np.sin(theta),0], [np.sin(theta), np.cos(theta), 0], [0, 0, 1]])
     return rotation
 
-def is_intersecting(new_ctrl_pts, prev_ctrl_pts_list):
-    new_ctrl_pts=new_ctrl_pts.transpose()[:,:3]
-    print(new_ctrl_pts)
-    min_x_new = np.min(new_ctrl_pts[:, 0])
-    max_x_new = np.max(new_ctrl_pts[:, 0])
-    min_y_new = np.min(new_ctrl_pts[:, 1])
-    max_y_new = np.max(new_ctrl_pts[:, 1])
-    min_z_new = np.min(new_ctrl_pts[:, 2])
-    max_z_new = np.max(new_ctrl_pts[:, 2])
-    print((min_x_new, max_x_new))
-    print((min_y_new, max_y_new))
-    print((min_z_new, max_z_new))
-
-    for pt in prev_ctrl_pts_list:
-        pt = pt.transpose()[:, :3]
-        print(pt)
-        min_x_pt = np.min(new_ctrl_pts[:, 0])
-        max_x_pt = np.max(new_ctrl_pts[:, 0])
-        min_y_pt = np.min(new_ctrl_pts[:, 1])
-        max_y_pt = np.max(new_ctrl_pts[:, 1])
-        min_z_pt = np.min(new_ctrl_pts[:, 2])
-        max_z_pt = np.max(new_ctrl_pts[:, 2])
-        print((min_x_pt, max_x_pt))
-        print((min_y_pt, max_y_pt))
-        print((min_z_pt, max_z_pt))
-    
-        count = 0
-        if min_x_new >= min_x_pt or max_x_new <= max_x_pt:
-            count += 1
-        if min_y_new >= min_y_pt or max_y_new <= max_y_pt:
-            count += 1
-        if min_z_new >= min_z_pt or max_z_new <= max_z_pt:
-            count += 1
-        if count == 3:
-            return True
-    return False
-
 def turn_into_points(ctrl_points):
+    """
+    Returns a Nx1 version numpy array of ctrl_points.
+    """
     points=np.array([0,0,0])
     for layer in ctrl_points:
         for i in range(4):
             points = np.vstack((points, layer[:3, i]))
     return points[1:]
 
-def build_worm(layers=3, base_ctrl_pts=None):
-    
+def build_worm(layers=3, base_ctrl_pts=None, min_shift=0, max_shift=0):
+    """
+    Return numpy array of transformed, layered control points.
+    """
     ctrl_pts = [] 
-
-    # find all straight layers of worm
-    #base_ctrl_pts=np.array([[0,0,0], [1,0,0], [0,1,0], [1,1,0]]) # this needs to be a square that is a good starting place for every worm
     base_ctrl_pts=np.hstack((base_ctrl_pts, np.ones((4,1)))).transpose()
-    # print(f"Base is {base_ctrl_pts}")
-    # print("="*10)
-
     ctrl_pts.append(base_ctrl_pts)
     while len(ctrl_pts) < layers:
         temp = np.matmul(sample_rotation_axis(axis="x"), sample_rotation_axis(axis="y"))
         rotation = np.matmul(temp, sample_rotation_axis(axis="z"))
-        T = assemble_T(sample_shift(), rotation)
+        T = assemble_T(sample_shift(min_shift=min_shift, max_shift=max_shift), rotation)
         proposed_pt = np.matmul(T, ctrl_pts[-1])
         if len(ctrl_pts) > 1:
             hull = turn_into_points(ctrl_pts)
@@ -126,11 +95,10 @@ def build_worm(layers=3, base_ctrl_pts=None):
             check = hull.find_simplex(proposed_pt.transpose()[:,:3])>=0
             if sum(check) == 0:
                 ctrl_pts.append(proposed_pt)
-            else:
-                print("hello")
         else:
+            # first layer
             temp = base_ctrl_pts.copy()
-            temp[:3,:] += 0.2
+            temp[:3,:] += 0.05
             ctrl_pts.append(temp)
             hull = turn_into_points(ctrl_pts)
             if not isinstance(hull,Delaunay):
@@ -138,42 +106,15 @@ def build_worm(layers=3, base_ctrl_pts=None):
             check = hull.find_simplex(proposed_pt.transpose()[:,:3])>=0
             if sum(check) == 0:
                 ctrl_pts.append(proposed_pt)
-            else:
-                print("hello")
             ctrl_pts.pop(1)
     return np.array(ctrl_pts)
-
-def graph_straightened(filename):
-    frame = np.genfromtxt(filename, delimiter=',')[1:, 1:4]
-    normalized_frame = normalize(frame, axis=0, norm="l1")
-    np.savetxt("testing2.csv", frame, delimiter=',')
-    np.savetxt("testing2norm.csv", normalized_frame, delimiter=',')
-    fig = plt.figure()
-    ax = fig.add_subplot(projection='3d')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    x=frame[:,0]
-    y=frame[:,1]
-    z=frame[:,2]
-    ax.scatter(x, y, z, c='b', marker='o')
-    ax.set_title('Point Cloud')
-    plt.show()
-    plt.savefig("straightened.png")
-
-
-# need to make sure control points are around the actual worm
-import glob
-import torch
-from torch_tps import ThinPlateSpline
-from sklearn.preprocessing import normalize
 
 # starting control points should be equidistant around worm, same number as layers * 4
 def set_starting_ctrl(layers=3, base_ctrl_pts=None):
     """
-    Assume worm has same y coordinates. Each layer should have same 4 y coords.
+    Assume worm has same Y coordinates. Each layer should have same 4 y coords.
     Same order of base_ctrl_pts as in build_worm()
-    Returns numpy array of starting control point coordinates
+    Returns numpy array of starting, layered control points.
     """
     # order of these should match how the target points are set
     starting_ctrl = np.array([0,0,0])
@@ -188,24 +129,23 @@ def set_starting_ctrl(layers=3, base_ctrl_pts=None):
     starting_ctrl=starting_ctrl[1:]
     return starting_ctrl
 
-# for a given frame...
-# path_untwisted="/groups/funke/home/tame/data/Untwisted/SeamCellCoordinates/*.csv"
-# cells=sorted(glob.glob(path_untwisted))
-
-def transform(frame,layers):
+def transform(frame,layers, width=0.035, xz_min=0.0, xz_max=0.1, min_shift=-0.05, max_shift=0.05):
     """
-    frame is a N x 3 numpy array of seam cell locations
-    layers is an integer representing number of control point layers
-
-    returns a tensor of the transformed seam cell locations
+    frame is a N x 3 numpy array of seam cell locations.
+    layers is an integer representing number of control point layers.
+    Returns a tensor of the transformed seam cell locations.
     """
-    # frame = np.genfromtxt(vol, delimiter=',')[1:, 1:4]
-    frame = normalize(frame, axis=0, norm="l1") # make sure to normalize
+    # abs(shift value) must be greater than width to avoid edge case where control points always stay in hull
+    assert abs(min_shift) > width
+    assert abs(max_shift) > width
+    # normalize frame
+    frame = normalize(frame, axis=0, norm="l1")
     y = frame[:, 1]
-    y_min, y_max = y[0] - 0.03, y[0] + 0.03
-    base_ctrl_pts = np.array([[0,y_min,0], [0.1,y_min,0], [0,y_max,0], [0.1,y_max,0]])
+    # important base control points! sets how wide our points should be avoiding other points
+    y_min, y_max = y[0] - width, y[0] + width
+    base_ctrl_pts = np.array([[xz_min,y_min,xz_min], [xz_max,y_min,xz_min], [xz_min,y_max,xz_min], [xz_max,y_max,xz_min]])
     starting_ctrl = set_starting_ctrl(layers=layers, base_ctrl_pts=base_ctrl_pts)
-    worm = build_worm(layers=layers, base_ctrl_pts=base_ctrl_pts)
+    worm = build_worm(layers=layers, base_ctrl_pts=base_ctrl_pts, min_shift=min_shift, max_shift=max_shift)
     worm = turn_into_points(worm)
     tps = ThinPlateSpline(alpha=0.0)
     starting_ctrl_tensor = torch.from_numpy(starting_ctrl).float()
@@ -215,9 +155,12 @@ def transform(frame,layers):
     transformed_points = tps.transform(frame_tensor)
     return transformed_points
 
-# spline_graph(frame, starting_ctrl, "testing.png")
-# spline_graph(transformed_points, worm, "testing1.png")
-# np.savetxt("cells.csv", frame, delimiter=',')
-# np.savetxt("ctrl.csv", starting_ctrl, delimiter=',')
-# np.savetxt("transformed_cells.csv", transformed_points, delimiter=',')
-# np.savetxt("transformed_ctrl.csv", worm, delimiter=',')
+if __name__ == "__main__":
+    train_path=sorted(glob.glob("/groups/funke/home/tame/data/Untwisted/SeamCellCoordinates/*.csv"))
+    actual_path=sorted(glob.glob("/groups/funke/home/tame/data/seamcellcoordinates/*.csv"))
+    node_positions = np.genfromtxt(train_path[21], delimiter=',')[1:, 1:4]
+    actual_positions = np.genfromtxt(actual_path[21], delimiter=',')[1:, 1:4]
+    
+    for i in range(5,11):
+        transformed_points = transform(node_positions, 8)
+        np.savetxt("cells" + str(i) + ".csv", transformed_points, delimiter=',')
