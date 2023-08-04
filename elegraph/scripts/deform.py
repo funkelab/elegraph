@@ -92,13 +92,17 @@ def build_worm(layers=3, base_ctrl_pts=None, min_shift=0, max_shift=0):
             hull = turn_into_points(ctrl_pts)
             if not isinstance(hull,Delaunay):
                 hull = Delaunay(hull)
-            check = hull.find_simplex(proposed_pt.transpose()[:,:3])>=0
-            if sum(check) == 0:
+            # positive/0 value mean a point lies in or on the hull boundary
+            # negative value mean a point lies outside the hull boundary
+            points = proposed_pt.transpose()[:,:3]
+            check = hull.find_simplex(points)>=0
+            check_segment = hull.find_simplex(get_all_segment_points(points[0], points[1], points[2], points[3], 5))>=0
+            if sum(check) == 0 and sum(check_segment) == 0:
                 ctrl_pts.append(proposed_pt)
         else:
             # first layer
             temp = base_ctrl_pts.copy()
-            temp[:3,:] += 0.05
+            temp[:3,:] += 0.05 # 0.05
             ctrl_pts.append(temp)
             hull = turn_into_points(ctrl_pts)
             if not isinstance(hull,Delaunay):
@@ -155,12 +159,57 @@ def transform(frame,layers, width=0.035, xz_min=0.0, xz_max=0.1, min_shift=-0.05
     transformed_points = tps.transform(frame_tensor)
     return transformed_points
 
+import random
+def random_pts_between(pointA, pointB, n):
+    x1, y1, z1 = pointA
+    x2, y2, z2 = pointB
+    points = []
+    dx, dy, dz = x2 - x1, y2 - y1, z2 - z1
+    for _ in range(n):
+        t = random.uniform(0, 1)
+        x = x1 + t * dx
+        y = y1 + t * dy
+        z = z1 + t * dz
+        points.append((x, y, z))
+    return np.array(points)
+
+def get_all_segment_points(pointA, pointB, pointC, pointD, n):
+    all_points = random_pts_between(pointA, pointB, n)
+    all_points = np.vstack((all_points, random_pts_between(pointA, pointC, n)))
+    all_points = np.vstack((all_points, random_pts_between(pointB, pointD, n)))
+    all_points = np.vstack((all_points, random_pts_between(pointC, pointD, n)))
+    return all_points
+
+def graph(array):
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    x = array[:,0]
+    y = array[:,1]
+    z = array[:,2]
+    ax.scatter(x, y, z, c='b', marker='o')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('Point Cloud')
+    plt.show()
+    plt.savefig("testttt.png")
+
 if __name__ == "__main__":
+    # pointA = np.array([1,2,3])
+    # pointB = np.array([5,5,5])
+    # n = 10
+    # random_points_on_segment = generate_random_points_on_segment(pointA, pointB, n)
+    # print(random_points_on_segment)
+
+    # all_points = np.vstack((pointA, pointB))
+    # all_points = np.vstack((all_points, random_points_on_segment))
+    # graph(all_points)
+    # np.savetxt("testttt.csv", all_points, delimiter=',')
     train_path=sorted(glob.glob("/groups/funke/home/tame/data/Untwisted/SeamCellCoordinates/*.csv"))
     actual_path=sorted(glob.glob("/groups/funke/home/tame/data/seamcellcoordinates/*.csv"))
     node_positions = np.genfromtxt(train_path[21], delimiter=',')[1:, 1:4]
     actual_positions = np.genfromtxt(actual_path[21], delimiter=',')[1:, 1:4]
-    
+    np.random.seed(3)
     for i in range(5,11):
         transformed_points = transform(node_positions, 8)
         np.savetxt("cells" + str(i) + ".csv", transformed_points, delimiter=',')
