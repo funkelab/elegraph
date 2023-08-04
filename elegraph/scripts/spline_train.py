@@ -23,7 +23,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 from mid_spline import spline_graph
 from deform import transform
-from angle import set_curvatures, same_side
+from angle import set_curvatures
 import random
 from visual_matching import visualize_matches
 
