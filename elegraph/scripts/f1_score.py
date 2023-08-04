@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 path = "/groups/funke/home/tame/elegraph/experiments/demo_run_1/inference/result.zarr"
 large_predicted_volume = zarr.open(path, "r")["prediction"]
+large_predicted_volume = large_predicted_volume[0,0]
 print(large_predicted_volume.shape)
 
 # bright means at least 0.7
@@ -47,7 +48,7 @@ def get_gt_seam_cell_locations():
             all_seam_cells_list.append(vol)
     return all_seam_cells_list
 
-def count_valid_matches(time_vol, gt_time_list, bright_threshold=0.2):
+def count_valid_matches(time_vol, gt_time_list, bright_threshold):
     """
     Returns number of ground truth points appearing on predicted time volume.
     """
@@ -58,7 +59,7 @@ def count_valid_matches(time_vol, gt_time_list, bright_threshold=0.2):
             matches += 1
     return matches
 
-def count_bright(time_vol, test_data, time, bright_threshold=0.2):
+def count_bright(time_vol, test_data, time, bright_threshold):
     """
     Returns number of true positives and false negatives in a predicted time volume.
     """
@@ -123,7 +124,7 @@ def max_pool(volume, kernel):
 
     return pooled_volume
 
-def find_local_max(volume, compare, boundary=0.6):
+def find_local_max(volume, compare, boundary):
     """
     Find and return list of volume's (z,y,x) coordinates where the local max values reside.  
     NOTE: Parameter 'compare' can be the max pool volume or an integer
@@ -144,14 +145,14 @@ def find_local_max(volume, compare, boundary=0.6):
                     local_maxes.append((z, y, x))
     return local_maxes
 
-def get_seam_cell_list(time_vol, time):
+def get_seam_cell_list(time_vol, time, boundary):
     """
     For a predicted time volume, return all seam 
     cell coordinates (z,y,x) in a list using non-maxima suppression.
     """
     all_seam_cells = []
     max_pooled_vol = max_pool(time_vol, (40,40,40))
-    local_maxes = find_local_max(time_vol, max_pooled_vol)
+    local_maxes = find_local_max(time_vol, max_pooled_vol, boundary)
     for coord in local_maxes:
         x,y,z = coord[2], coord[1], coord[0]
         updated_coord = (time, x, y, z, time_vol[z, y, x]) # T X Y Z Intensity
@@ -164,13 +165,13 @@ def euclid_dist(x,y):
     """
     return np.sqrt(((y[0] - x[0]) ** 2) + ((y[1] - x[1]) ** 2) + ((y[2] - x[2]) ** 2))
 
-def greedy_filter(time_vol, time, elim_dist=25):
+def greedy_filter(time_vol, time, elim_dist, boundary):
     """
     After obtaining and sorting the seam cells list by highest intensity, greedily eliminate 
     points that are within 'elim_dist' of the brightest point. Pop the brightest point off the list
     and add to a new list. Continue until the initial list is empty.
     """
-    all_seam_cells_list = get_seam_cell_list(time_vol, time)
+    all_seam_cells_list = get_seam_cell_list(time_vol, time, boundary)
     all_seam_cells_list.sort(key=lambda x: (x[0], x[4]), reverse=True)
    
     final_seam_cells_list = []
@@ -196,8 +197,8 @@ def greedy_filter(time_vol, time, elim_dist=25):
                 break
         all_seam_cells_list.pop(0)
         final_seam_cells_list.append(top_cell)
-    print(final_seam_cells_list)
-    print(len(final_seam_cells_list))
+    # print(final_seam_cells_list)
+    # print(len(final_seam_cells_list))
     return final_seam_cells_list
 
 def f1_score(tp, fp, fn):
@@ -206,27 +207,28 @@ def f1_score(tp, fp, fn):
     """
     return tp / (tp + (0.5 * (fp + fn)))
 
-def test_f1(large_predicted_volume):
+def test_f1(large_predicted_volume, elim_dist, boundary, bright_threshold):
     true_pos = 0
     false_neg = 0
     false_pos = 0
     
-    large_predicted_volume=large_predicted_volume[0,0]
-    test_csv_path = "/groups/funke/home/tame/data/val.csv"
+    # large_predicted_volume=large_predicted_volume[0,0]
+    #test_csv_path = "/groups/funke/home/tame/data/val.csv"
+    test_csv_path = "/groups/funke/home/tame/data/test.csv"
     test_data = np.genfromtxt(test_csv_path, delimiter=' ')
     gt_locations = get_gt_seam_cell_locations()
 
     for time in tqdm(range(20, large_predicted_volume.shape[0])):
         # part 1
         time_vol = large_predicted_volume[time]
-        true_pos_and_false_neg = count_bright(time_vol, test_data, time)
+        true_pos_and_false_neg = count_bright(time_vol, test_data, time, bright_threshold)
         curr_true_pos = true_pos_and_false_neg[0]
         false_neg += true_pos_and_false_neg[1]
-        matches = count_valid_matches(time_vol, gt_locations[time - 20])
+        matches = count_valid_matches(time_vol, gt_locations[time - 20], bright_threshold)
         true_pos += curr_true_pos
 
         # part 2
-        pred_local_max = greedy_filter(time_vol, time)
+        pred_local_max = greedy_filter(time_vol, time, elim_dist, boundary)
         temp = len(pred_local_max) - matches
         if temp < 0:
             temp = 0
@@ -238,5 +240,45 @@ def test_f1(large_predicted_volume):
 
     return f1_score(true_pos, false_pos, false_neg)
 
+def test_params():
+    #elim_dist=25, boundary=0.6, bright=0.2 => 0.66
 
-print(test_f1(large_predicted_volume))
+    #elim_dist=35, boundary=0.6, bright=0.2
+    #test = test_f1(large_predicted_volume, 35, 0.6, 0.2)
+    #print(35,0.6,0.2, test)
+    
+    #elim_dist=40, boundary=0.6, bright=0.2
+    test = test_f1(large_predicted_volume, 40, 0.6, 0.2) # 0.80 f1 accuracy
+    print(40,0.6,0.2, test)
+
+    #elim_dist=35, boundary=0.5, bright=0.2
+    #test = test_f1(large_predicted_volume, 35, 0.5, 0.2)
+    #print(35,0.5,0.2, test)
+
+    #elim_dist=40, boundary=0.5, bright=0.2
+    #test = test_f1(large_predicted_volume, 40, 0.5, 0.2)
+    #print(40,0.5,0.2, test)
+
+    # with open("f1_score_param.csv", "w") as f:
+    #     writer = csv.writer(f, delimiter=" ")
+    #     writer.writerow(["elim_dist", "boundary", "bright_threshold", "f1_score"])
+    #     for i in range(6, 50, 3):
+    #         for j in np.arange(0.4, 0.8, 0.05):
+    #             for k in np.arange(0.1, 0.8, 0.05):
+    #                 result = test_f1(large_predicted_volume, i, j, k)
+    #                 print(i,j,k,result)
+    #                 writer.writerow([i, j, k, result])
+            
+test_params()
+
+#val
+# 40 0.6 0.2 -> 80.35%
+# True Positives:  135
+# False Negatives:  21
+# False Positives:  45
+
+#test
+# True Positives:  140
+# False Negatives:  15
+# False Positives:  45
+# Matches:  20
